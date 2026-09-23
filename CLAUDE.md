@@ -141,6 +141,44 @@ powershell -ExecutionPolicy Bypass -File build.ps1
     └── app.manifest            DPI 感知設定
 ```
 
+## 發佈到 GitHub（2026-09-23）
+
+已建立並推送到 <https://github.com/leoleotsai-afk/oav_image>（public，
+`main` 分支）。這次「改寫以便發佈」實際做的事：
+
+- 新增 [.gitignore](./.gitignore)：排除 `bin\`（編譯產物，`build.ps1` 可重新
+  產生）、`image_index.json`（自動產生的雜湊快取）、**`images\` 底下的實際
+  圖片檔**（只留 `images/.gitkeep` 跟 `images/README.md` 進版控）。這台機器
+  的 `images\` 當時已經放了 15 張真實設備照片（`A001_1.jpg`...），**問過
+  使用者後決定不把實際照片推上公開 repo**，只發佈程式本身——公司內部設備
+  照片可能牽涉機密/隱私，公開 repo 沒有存取控制，這個決定不能自己悶著頭做，
+  已經用 `AskUserQuestion` 明確問過（是否上傳照片、public/private）才動手。
+  之後要換一批「可以公開的範例圖片」進 `images\`，直接調整
+  `.gitignore`（拿掉 `images/*` 那條）即可。
+- 新增給人看的 [README.md](./README.md)（英文/中文說明、功能表、安裝與
+  執行方式、專案結構、已知限制）。原本的 `CLAUDE.md`／`SKILL.md` 是寫給
+  AI agent 看的「任務記錄＋可重用技巧」風格（大量踩坑細節、決策過程），
+  不適合當 GitHub 訪客第一眼看到的門面，兩者分工保留、互相連結。
+- 掃過所有原始碼／文件確認沒有機密資訊（DB 連線字串、token、個人資料）才
+  推上去——這個專案本來就沒有連資料庫，比對起來比
+  [01_建資料表](../01_建資料表/CLAUDE.md) 這類會踩到 DB 密碼的專案單純很多。
+
+### 這台機器一開始沒有 `gh` CLI，過程記錄見 SKILL.md
+
+環境檢查發現沒有 `gh`（GitHub CLI）也沒有任何已存的 git/GitHub 憑證
+（`git config --global credential.helper` 沒設、`cmdkey /list` 也沒有
+github 相關項目）。裝 `gh`、登入、建 repo、推送的完整可重用做法（含
+`winget` 裝套件會卡 msstore 條款互動提示的坑、新裝的 CLI 在目前 shell
+裡 `PATH` 抓不到的坑、`gh auth login` 裝置驗證碼流程怎麼在背景工具裡跑）
+都寫在 [SKILL.md](./SKILL.md)，這裡不重複。
+
+`leoleotsai-afk/oav_image` 這個 repo 名稱**使用者其實已經先手動建好了**
+（空的、public），第一次 `gh repo create ... --push` 因為「Name already
+exists on this account」失敗，改成 `git remote add origin` +
+`git push -u origin main` 就成功了。**之後類似任務，`gh repo create`
+失敗如果是這個訊息，先用 `gh repo view <owner>/<repo> --json isEmpty` 確認
+是不是已經有一個空 repo 在那裡，不要當成錯誤處理，直接接上去推送即可。**
+
 ## 已知限制
 
 - dHash 系列演算法抓的是「整體構圖＋色彩分布」，不是物件辨識，**對同一物件

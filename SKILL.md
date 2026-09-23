@@ -116,6 +116,100 @@ number（IEEE double），超過 2^53 的 `ulong`/`long` 會失真。存雜湊�
    驗證排序結果符合預期。這比硬做 UI 自動化快很多，而且真的驗證到核心
    邏輯（UI 自動化就算點得到按鈕，也驗證不了雜湊算得對不對）。
 
+## 把這類本機專案發佈到 GitHub：`gh` 沒裝、沒登入時的完整流程
+
+適用情境：要把一個原本只在本機跑的專案（尤其是這種「刻意不依賴外部套件」
+的環境）推上 GitHub，但機器上**沒有 `gh` CLI，也沒有任何已儲存的 git/GitHub
+憑證**（`git config --global credential.helper` 沒設值、`cmdkey /list`
+找不到 github 項目、環境變數沒有 `GH_TOKEN`/`GITHUB_TOKEN`）。
+
+### 1. 裝 `gh`：用 `winget install`，一定要指定 `--source winget`
+
+```powershell
+winget install --id GitHub.cli --source winget --accept-package-agreements --accept-source-agreements -e
+```
+
+**不要漏掉 `--source winget`**：預設 `winget` 會先問要不要接受 `msstore`
+來源條款（互動式 Y/N 提示），非互動環境（沒有 stdin）會直接炸掉
+「讀取輸入提示時發生錯誤」。指定 `--source winget` 繞過 `msstore` 來源，
+全程不需要任何互動確認。
+
+### 2. 剛裝好的 CLI，同一個 shell session 抓不到新 `PATH`
+
+`winget` 把新程式的路徑寫進登錄機／使用者環境變數，但**目前這個 shell
+process 的 `$env:Path` 是啟動當下複製的一份，不會自動更新**，裝完馬上
+`gh --version` 會出現「不是可辨識的 Cmdlet」。兩種解法擇一：
+
+```powershell
+# 方法一：從登錄檔重讀 PATH 塞進目前 session
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+            [System.Environment]::GetEnvironmentVariable("Path","User")
+```
+
+```bash
+# 方法二（bash 工具）：直接用完整路徑呼叫，不依賴 PATH
+"/c/Program Files/GitHub CLI/gh.exe" --version
+```
+
+### 3. 登入：不要用互動式問卷模式，用裝置驗證碼（device flow）+ 背景工具
+
+`gh auth login`（不帶參數）會跳互動式選單（方向鍵選 GitHub.com/HTTPS/…），
+這種需要 TTY 的問卷在非互動 shell 工具裡完全沒辦法用。**帶齊參數跳過問卷，
+直接進裝置驗證碼流程**：
+
+```bash
+gh auth login --hostname github.com --git-protocol https --web
+```
+
+這個指令會印出一組一次性代碼（例如 `F80E-945B`）跟
+`https://github.com/login/device` 網址，然後**卡住等使用者在瀏覽器完成授權
+才會結束**（可能長達幾分鐘，取決於使用者多快去操作）。因此**一定要用背景
+執行的方式跑**（例如 Claude Code 的 `Bash` 工具 `run_in_background: true`），
+不要同步等待卡住整個對話。跑起來之後：
+
+1. 把印出來的代碼＋網址直接告訴使用者，請他們去瀏覽器完成授權
+2. 背景工具跑完（工具會主動通知／可輪詢輸出檔）會看到
+   `✓ Authentication complete.` `✓ Logged in as <username>`
+3. 用 `gh auth status` 確認 `Token scopes` 有 `repo`（建 repo、push 都需要）
+
+**不要用 `git config --global credential.helper` 現有的 `manager`
+（Git Credential Manager）硬 push 賭它會自動彈瀏覽器**——那條路對「建立
+新 repo」沒用（GCM 只處理 git http 認證，不能呼叫 GitHub API 建 repo），
+`gh auth login` 才是同時解決「建 repo」和「push 認證」兩件事的正確做法
+（`gh` 登入後，`git push` 也會透過 GCM 用同一組憑證，不需要再另外設定）。
+
+### 4. 發佈前：先決定「哪些東西不上公開 repo」，不要自己悶著頭排除或悶著頭全推
+
+這類專案常見兩種需要排除、但**不能自己片面決定**的內容：
+
+- **`bin\`／編譯產物**：這個可以直接自己決定排除（`build.ps1` 隨時能重編，
+  純衍生檔，沒有爭議）。
+- **使用者放進 `images\`（或其他資料夾）的實際業務資料/照片**：這種**要先
+  用 `AskUserQuestion` 問過**「要不要連同資料一起公開」「repo 要 public
+  還是 private」，不要假設。理由：本機專案的資料夾裡放的往往是使用者自己
+  公司的實際資料（設備照片、內部文件），一旦 `git push` 到公開 repo，
+  即使事後 `git rm` 也已經留在 GitHub 的歷史紀錄跟可能的第三方快取裡，
+  是不可逆的外流風險，跟建 repo/push 這種「可逆」操作性質不同，值得多問
+  一步。做法：`.gitignore` 排除實際檔案，只保留一個資料夾內的
+  `README.md`／`.gitkeep` 說明「東西放這裡、預設不進版控」。
+
+### 5. 建 repo + push：先假設對方可能已經手動建好空 repo
+
+```bash
+gh repo create <owner>/<repo> --public --source=. --remote=origin --push
+```
+
+如果失敗訊息是 `GraphQL: Name already exists on this account`，**不是
+真的錯誤**，通常代表使用者自己已經在 GitHub 網站上手動建好一個空 repo
+（這個情境常見於「使用者先建好殼、叫 AI 把內容填進去」）。改用：
+
+```bash
+gh repo view <owner>/<repo> --json isEmpty,visibility   # 確認真的是空的
+git remote add origin https://github.com/<owner>/<repo>.git
+git branch -M main
+git push -u origin main
+```
+
 ## 建置指令骨架
 
 跟 [03_工單回報桌機版/build.ps1](../03_工單回報桌機版/build.ps1) 同一套

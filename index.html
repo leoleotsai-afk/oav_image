@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圖片辨識系統（網頁版）</title>
+<style>
+  :root {
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --border: #e2e5ec;
+    --text: #1f2430;
+    --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    color: #fff;
+    padding: 20px 24px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; opacity: 0.85; font-size: 13px; }
+  main {
+    max-width: 1100px;
+    margin: 20px auto;
+    padding: 0 16px 40px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 15px;
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button {
+    font-size: 14px;
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  button:hover:not(:disabled) { background: #f0f3fb; }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  button.primary:hover:not(:disabled) { background: var(--accent-dark); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  #statusText { font-size: 13px; color: var(--muted); }
+  #libraryInput { display: none; }
+  .content-grid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 800px) {
+    .content-grid { grid-template-columns: 1fr; }
+  }
+  #queryPreview {
+    width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: contain;
+    background: #eef0f5;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  #queryInfo { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 20px; }
+  #cameraPanel {
+    display: none;
+    margin-top: 12px;
+  }
+  #cameraPanel video { width: 100%; border-radius: 8px; background: #000; }
+  #resultsGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .result-item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .result-item img {
+    width: 100%;
+    height: 110px;
+    object-fit: cover;
+    display: block;
+    background: #eef0f5;
+  }
+  .result-item .meta {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .result-item .name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .result-item .score { color: var(--accent); font-weight: 600; }
+  #emptyHint { color: var(--muted); font-size: 13px; }
+  .browser-note {
+    font-size: 12px;
+    color: var(--muted);
+    border-top: 1px dashed var(--border);
+    margin-top: 12px;
+    padding-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>圖片辨識系統（網頁版）</h1>
+  <p>用語音、上傳圖片、或相機拍照，從你選擇的圖片庫資料夾中找出最相似的圖片 — 完全在瀏覽器本機執行，圖片不會上傳到任何伺服器。</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. 選擇圖片庫</h2>
+    <div class="row">
+      <button id="btnPickFolder" class="primary">📂 選擇圖片庫資料夾</button>
+      <input type="file" id="libraryInput" webkitdirectory directory multiple accept="image/*">
+      <span id="statusText">尚未選擇圖片庫</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. 查詢方式</h2>
+    <div class="row">
+      <button id="btnVoice" disabled>🎤 語音查詢</button>
+      <button id="btnUpload" disabled>📁 上傳圖片查詢</button>
+      <button id="btnCamera" disabled>📷 拍照查詢</button>
+      <input type="file" id="uploadInput" accept="image/*" style="display:none">
+    </div>
+    <div id="cameraPanel">
+      <video id="cameraVideo" autoplay playsinline></video>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnShoot" class="primary">📸 拍照</button>
+        <button id="btnCancelCamera">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="content-grid">
+      <div>
+        <h2>查詢圖片</h2>
+        <img id="queryPreview" alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7">
+        <div id="queryInfo">尚未查詢。請先選擇圖片庫資料夾，再用上方任一方式開始搜尋。</div>
+      </div>
+      <div>
+        <h2>搜尋結果（依相似度排序）</h2>
+        <div id="resultsGrid"></div>
+        <div id="emptyHint">結果會顯示在這裡。</div>
+      </div>
+    </div>
+    <div class="browser-note">
+      建議使用電腦版 Chrome 或 Edge 開啟：語音查詢需要瀏覽器支援
+      Web Speech API（連線到瀏覽器內建的語音辨識服務，非完全離線）；相機查詢需要允許存取攝影機權限。
+      Firefox / Safari 對語音查詢的支援不完整。圖片庫的實際檔案只會留在你自己的電腦裡，
+      不會被上傳、也不會離開瀏覽器。
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  const TOP_K = 8;
+  const BLANK_PREVIEW = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7";
+
+  const btnPickFolder = document.getElementById("btnPickFolder");
+  const libraryInput = document.getElementById("libraryInput");
+  const statusText = document.getElementById("statusText");
+
+  const btnVoice = document.getElementById("btnVoice");
+  const btnUpload = document.getElementById("btnUpload");
+  const btnCamera = document.getElementById("btnCamera");
+  const uploadInput = document.getElementById("uploadInput");
+
+  const cameraPanel = document.getElementById("cameraPanel");
+  const cameraVideo = document.getElementById("cameraVideo");
+  const btnShoot = document.getElementById("btnShoot");
+  const btnCancelCamera = document.getElementById("btnCancelCamera");
+
+  const queryPreview = document.getElementById("queryPreview");
+  const queryInfo = document.getElementById("queryInfo");
+  const resultsGrid = document.getElementById("resultsGrid");
+  const emptyHint = document.getElementById("emptyHint");
+
+  // library = [{ name, url, hash: {Y,R,G,B} }]
+  let library = [];
+  let cameraStream = null;
+
+  // ---------- perceptual hash: same 256-bit (Y/R/G/B dHash) algorithm as the ----------
+  // ---------- desktop app's src/ImageHasher.cs, ported to JS with BigInt.     ----------
+
+  const hashCanvas = document.createElement("canvas");
+  hashCanvas.width = 9;
+  hashCanvas.height = 8;
+  const hashCtx = hashCanvas.getContext("2d", { willReadFrequently: true });
+
+  function computeHash(source) {
+    hashCtx.clearRect(0, 0, 9, 8);
+    hashCtx.drawImage(source, 0, 0, 9, 8);
+    const data = hashCtx.getImageData(0, 0, 9, 8).data;
+
+    function px(x, y) {
+      const i = (y * 9 + x) * 4;
+      return { r: data[i], g: data[i + 1], b: data[i + 2] };
+    }
+    function lum(p) { return 0.299 * p.r + 0.587 * p.g + 0.114 * p.b; }
+
+    let Y = 0n, R = 0n, G = 0n, B = 0n;
+    let bit = 0n;
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const left = px(x, y);
+        const right = px(x + 1, y);
+        const one = 1n << bit;
+        if (lum(left) > lum(right)) Y |= one;
+        if (left.r > right.r) R |= one;
+        if (left.g > right.g) G |= one;
+        if (left.b > right.b) B |= one;
+        bit += 1n;
+      }
+    }
+    return { Y, R, G, B };
+  }
+
+  function popcount(x) {
+    let c = 0;
+    while (x !== 0n) {
+      x &= (x - 1n);
+      c++;
+    }
+    return c;
+  }
+
+  function hammingDistance(a, b) {
+    return popcount(a.Y ^ b.Y) + popcount(a.R ^ b.R) + popcount(a.G ^ b.G) + popcount(a.B ^ b.B);
+  }
+
+  function similarity(a, b) {
+    return 1 - hammingDistance(a, b) / 256;
+  }
+
+  function loadImageFromUrl(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  // ---------- 1. image library picker (local files only, never uploaded) ----------
+
+  btnPickFolder.addEventListener("click", () => libraryInput.click());
+
+  libraryInput.addEventListener("change", async () => {
+    const files = Array.from(libraryInput.files).filter(f => /^image\//.test(f.type));
+    if (files.length === 0) {
+      statusText.textContent = "選擇的資料夾裡沒有找到圖片";
+      return;
+    }
+
+    setBusyButtons(true);
+    statusText.textContent = `正在建立索引... 0 / ${files.length}`;
+
+    library.forEach(item => URL.revokeObjectURL(item.url));
+    library = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const url = URL.createObjectURL(file);
+      try {
+        const img = await loadImageFromUrl(url);
+        const hash = computeHash(img);
+        library.push({ name: file.name, url, hash });
+      } catch (err) {
+        URL.revokeObjectURL(url);
+      }
+      statusText.textContent = `正在建立索引... ${i + 1} / ${files.length}`;
+    }
+
+    statusText.textContent = `已索引：${library.length} 張圖片`;
+    setBusyButtons(false);
+  });
+
+  function setBusyButtons(busy) {
+    btnPickFolder.disabled = busy;
+    const ready = !busy && library.length > 0;
+    btnUpload.disabled = busy || library.length === 0;
+    btnCamera.disabled = busy || library.length === 0;
+    btnVoice.disabled = busy || library.length === 0 || !voiceSupported();
+  }
+
+  // ---------- 2a. upload query ----------
+
+  btnUpload.addEventListener("click", () => uploadInput.click());
+
+  uploadInput.addEventListener("change", async () => {
+    const file = uploadInput.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = await loadImageFromUrl(url);
+    queryPreview.src = url;
+    queryInfo.textContent = "上傳圖片：" + file.name;
+    runVisualSearch(img, "視覺相似度比對");
+  });
+
+  // ---------- 2b. camera query ----------
+
+  btnCamera.addEventListener("click", async () => {
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    } catch (err) {
+      alert("無法開啟攝影機：" + err.message);
+      return;
+    }
+    cameraVideo.srcObject = cameraStream;
+    cameraPanel.style.display = "block";
+  });
+
+  btnShoot.addEventListener("click", () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = cameraVideo.videoWidth;
+    canvas.height = cameraVideo.videoHeight;
+    canvas.getContext("2d").drawImage(cameraVideo, 0, 0);
+
+    queryPreview.src = canvas.toDataURL("image/jpeg", 0.9);
+    queryInfo.textContent = "相機拍照查詢";
+
+    const hash = computeHash(canvas);
+    showResults(rankByHash(hash), "視覺相似度比對");
+
+    stopCamera();
+  });
+
+  btnCancelCamera.addEventListener("click", stopCamera);
+
+  function stopCamera() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      cameraStream = null;
+    }
+    cameraPanel.style.display = "none";
+  }
+
+  // ---------- 2c. voice query ----------
+
+  function voiceSupported() {
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+
+  let recognizer = null;
+  if (voiceSupported()) {
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognizer = new SpeechRecognitionCtor();
+    recognizer.lang = "zh-TW";
+    recognizer.continuous = false;
+    recognizer.interimResults = false;
+
+    recognizer.onresult = (event) => {
+      const text = event.results[0][0].transcript;
+      queryPreview.src = BLANK_PREVIEW;
+      queryInfo.textContent = "語音辨識結果：「" + text + "」";
+      showResults(rankByKeyword(text), "語音關鍵字比對");
+    };
+    recognizer.onerror = (event) => {
+      statusText.textContent = "語音辨識失敗：" + event.error;
+    };
+  } else {
+    btnVoice.textContent = "🎤 語音查詢（此瀏覽器不支援）";
+  }
+
+  btnVoice.addEventListener("click", () => {
+    if (!recognizer) return;
+    statusText.textContent = "請開始說話...";
+    recognizer.start();
+  });
+
+  // ---------- search ----------
+
+  function runVisualSearch(imageSource, label) {
+    const hash = computeHash(imageSource);
+    showResults(rankByHash(hash), label);
+  }
+
+  function rankByHash(queryHash) {
+    return library
+      .map(item => ({ item, score: similarity(queryHash, item.hash) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, TOP_K);
+  }
+
+  function rankByKeyword(query) {
+    const tokens = query.split(/[\s,，。、　]+/).filter(t => t.length > 0);
+    const list = tokens.length > 0 ? tokens : [query];
+
+    const scored = [];
+    for (const item of library) {
+      const name = item.name.replace(/\.[^.]+$/, "");
+      let score = 0;
+
+      for (const token of list) {
+        if (token.length === 0) continue;
+        if (name.toLowerCase().includes(token.toLowerCase())) {
+          score += token.length * 2;
+        }
+      }
+      for (const ch of query) {
+        if (/\s/.test(ch)) continue;
+        if (name.includes(ch)) score += 1;
+      }
+
+      if (score > 0) scored.push({ item, score });
+    }
+
+    const maxScore = scored.length > 0 ? Math.max(...scored.map(s => s.score)) : 1;
+    return scored
+      .map(s => ({ item: s.item, score: s.score / (maxScore || 1) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, TOP_K);
+  }
+
+  function showResults(ranked, label) {
+    resultsGrid.innerHTML = "";
+
+    if (ranked.length === 0) {
+      emptyHint.style.display = "block";
+      emptyHint.textContent = label + "：找不到相符的圖片";
+      statusText.textContent = "已索引：" + library.length + " 張圖片";
+      return;
+    }
+
+    emptyHint.style.display = "none";
+    for (const r of ranked) {
+      const card = document.createElement("div");
+      card.className = "result-item";
+
+      const img = document.createElement("img");
+      img.src = r.item.url;
+      img.alt = r.item.name;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.innerHTML =
+        '<div class="name" title="' + r.item.name + '">' + r.item.name + "</div>" +
+        '<div class="score">相似度 ' + Math.round(r.score * 100) + "%</div>";
+
+      card.appendChild(img);
+      card.appendChild(meta);
+      resultsGrid.appendChild(card);
+    }
+
+    statusText.textContent = label + "：找到 " + ranked.length + " 筆相符結果（共 " + library.length + " 張圖片庫）";
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -179,6 +179,68 @@ exists on this account」失敗，改成 `git remote add origin` +
 失敗如果是這個訊息，先用 `gh repo view <owner>/<repo> --json isEmpty` 確認
 是不是已經有一個空 repo 在那裡，不要當成錯誤處理，直接接上去推送即可。**
 
+## 網頁版（2026-09-23）：GitHub Pages 可以直接點開用
+
+使用者原本以為「推上 GitHub」＝「點開網址就能用」，但 WinForms 桌面程式
+（`bin\ImageSearch.exe`）本質上是本機執行檔，**GitHub 只是程式碼備份，
+本身不會變成一個可以打開的網站**，這是這次任務的核心誤解，來回問了幾次
+才確認清楚（見這次對話紀錄：先重建桌面捷徑讓使用者能在本機用，使用者才
+明確講出「請用html方式，用網頁能打開」）。
+
+因此新增了 [index.html](./index.html)：一個**純前端、零後端、零建置步驟**
+的網頁版，直接放在 repo 根目錄，透過 GitHub Pages 發佈：
+
+**<https://leoleotsai-afk.github.io/oav_image/>**
+
+功能對齊桌面版的三種查詢方式，但改用瀏覽器原生 API 達成（不再是
+`System.Speech`／叫起系統相機 App／本機檔案系統掃描）：
+
+| 功能 | 桌面版 (`bin\ImageSearch.exe`) | 網頁版 (`index.html`) |
+|---|---|---|
+| 語音 | `System.Speech`（離線 SAPI） | `SpeechRecognition` / `webkitSpeechRecognition`（連線到瀏覽器內建語音服務，**不是離線**，Chrome/Edge 支援好，Firefox/Safari 不完整） |
+| 拍照 | 叫起系統「相機」App＋監看 Camera Roll | `navigator.mediaDevices.getUserMedia` 直接在頁面內取得攝影機串流、`<canvas>` 截圖 |
+| 選圖片庫 | 掃描本機 `images\` 資料夾，索引存 `image_index.json` | `<input type="file" webkitdirectory>` 讓使用者**每次自己選一個本機資料夾**，索引只存在瀏覽器分頁的記憶體裡（重新整理頁面就要重選一次，這是刻意的設計，見下一段） |
+| 視覺相似度演算法 | `src/ImageHasher.cs`：256-bit（Y/R/G/B 四平面）dHash | `index.html` 內的 `computeHash()`：**同一套演算法逐行 port 成 JavaScript**，用 `BigInt` 處理 64-bit 位元運算（JS `number` 是 double，64-bit 整數位元運算會精度不足，這點跟桌面版當初用 hex 字串存雜湊、不能直接存 `ulong` 進 JSON 是同一個坑，見上面「圖片相似度演算法」那段） |
+
+**為什麼圖片庫要「每次選資料夾」而不是把圖片放進 repo 讓網頁直接讀**：
+延續先前的決定——使用者的圖片庫是真實設備照片，不該進公開 repo（見上面
+「發佈到 GitHub」那段）。`index.html` 部署在**公開**的 GitHub Pages 上，
+如果要讓網頁「內建」圖片庫，圖片就必須被公開 host，等於繞過了原本的隱私
+決策。改成「使用者用瀏覽器的資料夾選取器指向自己電腦上的圖片資料夾」，
+圖片檔案**完全不會被上傳、不會離開瀏覽器分頁**（用 `URL.createObjectURL`
+在本機記憶體建立預覽用的物件網址），公開的只有 `index.html` 這支程式本身。
+這個取捨要跟使用者講清楚：網頁版每次重新整理都要重選一次圖片庫資料夾，
+不會像桌面版一樣有持久化的 `image_index.json` 快取。
+
+### 部署方式：`gh api` 直接開 Pages，不用進網頁設定
+
+```bash
+gh api -X POST repos/<owner>/<repo>/pages -f "source[branch]=main" -f "source[path]=/"
+```
+
+回傳的 `html_url` 就是最終網址（格式固定是
+`https://<owner>.github.io/<repo>/`）。**開通後不是立刻能訪問**，GitHub
+背後要跑一次 build，用下面指令輪詢直到 `status` 變成 `built` 再回報網址給
+使用者，不要開通完就假設已經上線：
+
+```bash
+gh api repos/<owner>/<repo>/pages/builds/latest --jq .status
+```
+
+### 本機測試：用內建 `System.Net.HttpListener` 起靜態伺服器，不要直接用 `file://` 測
+
+`getUserMedia`（相機）在 `file://` 開啟時不保證能拿到權限（不是可靠的
+secure context），要跑 `http://localhost:<port>/` 才能跟正式的 GitHub
+Pages（HTTPS）行為一致。這台機器沒有 Python/Node，用一段
+`System.Net.HttpListener` 的 PowerShell 腳本充當靜態檔案伺服器即可（不需要
+額外套件）。**一定要用 `-EncodedCommand`（Base64 UTF-16LE）方式執行，
+不要把含中文路徑的腳本存成 `.ps1` 再用 `-File` 跑**——踩過一次
+[04_自動錄入回報內容/CLAUDE.md](../04_自動錄入回報內容/CLAUDE.md) 記錄的
+「`.ps1` 檔案中文字面值編碼爛掉」同一個坑，這次是資料夾路徑本身含中文
+（`05_圖片辦別系統`），改用 `-EncodedCommand` 就完全沒問題。另外別預設用
+`8080` 埠，這台機器 `8080` 已經被系統佔用（`Get-NetTCPConnection` 查得到
+`OwningProcess=4`），换一個沒人用的埠（例如 `8123`）就好。
+
 ## 已知限制
 
 - dHash 系列演算法抓的是「整體構圖＋色彩分布」，不是物件辨識，**對同一物件

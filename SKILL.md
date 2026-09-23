@@ -210,6 +210,92 @@ git branch -M main
 git push -u origin main
 ```
 
+## 「推上 GitHub」不等於「有網址可以用」：先搞清楚使用者要的是哪一種
+
+這次任務踩到的最大認知坑，不是技術問題，是需求理解問題：使用者把一支
+本機 WinForms 桌面程式推上 GitHub 之後，問「為什麼點開沒有執行」——因為
+**GitHub repo 本身只是程式碼託管，不是可執行的網站**，使用者（尤其是
+非技術背景）常常預設「有 GitHub 網址」＝「網頁打開就能用」。
+
+診斷技巧：使用者說「無法執行」時，**不要急著在同一台機器上除錯 build
+指令**，先確認 repo 裡到底有沒有『瀏覽器打得開、看得到東西』的產物
+（`index.html`／GitHub Pages）。這台機器上真正發生的事是：桌面版
+`.exe` 其實完全編譯成功、也能正常執行（用同一份原始碼重新 `git clone`
++ `build.ps1` 驗證過，見上面的驗證流程），使用者卻仍然「看不懂」——
+因為他要的根本不是「本機桌面程式」，是「瀏覽器網址點開就能用」，
+兩者是完全不同的產物形態。**先用 `AskUserQuestion` 或直接反問確認
+「你要的是本機執行檔，還是瀏覽器打開的網頁？」**，比一直除錯桌面版
+build 流程更快抓到真正的需求。
+
+### 把同一套功能改寫成純前端網頁版（GitHub Pages 能 host 的形態）
+
+如果判斷出使用者要的是「網址點開就能用」，且原本的邏輯不依賴伺服器端
+運算（這次的圖片雜湊比對純粹是本機算圖，沒有牽涉資料庫／機密 API），
+**直接把核心演算法逐行 port 成純前端 JavaScript，單一 `index.html`
+自帶所有 CSS/JS，不需要任何建置步驟（沒有 webpack/npm，因為這台機器
+本來就沒裝 Node）**，放在 repo 根目錄，透過 GitHub Pages 免費 host：
+
+```bash
+gh api -X POST repos/<owner>/<repo>/pages -f "source[branch]=main" -f "source[path]=/"
+# 回傳 html_url 就是 https://<owner>.github.io/<repo>/ ，但要等 build 完成
+gh api repos/<owner>/<repo>/pages/builds/latest --jq .status   # 輪詢到 "built" 才算真的上線
+```
+
+port 演算法時的注意事項（這次是 64-bit 感知雜湊，Y/R/G/B 四平面 dHash）：
+
+- **C# 的 `ulong` 位元運算，JS 要改用 `BigInt`**（例如 `1n << bit`、
+  `x &= x - 1n`），不能直接用 JS `number`——JS 數字是 IEEE double，
+  64-bit 整數的位元運算會精度不足，這跟桌面版當初「雜湊不能直接存進
+  JSON 數值、要轉 hex 字串」是同一類坑，只是這次換成瀏覽器端的等價問題。
+- 用同樣的 9×8 縮圖＋逐色版比較相鄰像素大小的邏輯（`canvas.drawImage`
+  縮圖到 9×8 + `getImageData` 讀像素），確保跟桌面版的排序結果一致，
+  不要為了「網頁版」重新設計一套不同的演算法，會導致兩邊給出不一樣的
+  相似度排名，使用者會混淆。
+
+### 隱私決策要延續，不能因為換了技術形態就忘記
+
+前面「排除實際照片不進公開 repo」的決策（見前一段），**在網頁版同樣適用，
+甚至更嚴格**：GitHub Pages 是完全公開的靜態網站，任何放進 repo 的圖片檔
+都等於公開在網路上。網頁版的圖片庫**不能**內嵌／預先載入到頁面裡，必須
+讓使用者用瀏覽器的 `<input type="file" webkitdirectory>` 資料夾選取器，
+**每次在自己電腦上現場選圖片庫資料夾**，用 `URL.createObjectURL` 在瀏覽器
+分頁記憶體裡處理，圖片檔案完全不經過網路、不上傳、不進 repo。這個限制
+（每次重新整理頁面要重選資料夾）要清楚寫進文件跟頁面上的說明文字，
+不要讓使用者以為是 bug。
+
+### 本機測試網頁版：起一個 `localhost` 靜態伺服器，不要只測 `file://`
+
+`getUserMedia`（相機）、有些瀏覽器對 `SpeechRecognition` 的權限行為，
+在 `file://` 開啟時不一定跟正式部署（HTTPS）一致。這台機器沒有
+Python/Node，用 .NET 內建的 `System.Net.HttpListener` 寫一段 PowerShell
+充當靜態檔案伺服器即可：
+
+```powershell
+$listener = New-Object System.Net.HttpListener
+$listener.Prefixes.Add("http://localhost:$Port/")
+$listener.Start()
+# ... 迴圈讀 $listener.GetContext()，把 request path 對應到本機檔案讀出來回傳
+```
+
+**兩個踩過的坑**：
+
+1. 埠號不要預設用 `8080`，這類機器常常已經被別的服務佔用
+   （`Get-NetTCPConnection -LocalPort 8080` 查得到 `OwningProcess`
+   不是自己的 process 就代表被占用了，換個沒人用的埠即可）。
+2. 如果專案資料夾路徑本身含中文（很常見，這些任務的資料夾都是中文
+   命名），**把伺服器腳本存成 `.ps1` 檔再用 `-File` 執行，中文路徑會
+   因為檔案編碼被讀壞**（跟 [04_自動錄入回報內容/SKILL.md](../04_自動錄入回報內容/SKILL.md)
+   記錄的「`.ps1` 中文字面值編碼」是同一類問題）。改成把整段腳本組成
+   字串、用 `[Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($cmd))`
+   編碼後透過 `powershell -EncodedCommand <base64>` 執行，完全避開檔案
+   編碼問題。
+3. 驗證頁面 JS 有沒有正常執行，不要只看畫面截圖「有沒有顯示東西」——
+   HTML/CSS 就算內嵌的 `<script>` 整段執行時丟例外，畫面通常還是會正常
+   排版出來（只是按鈕點了沒反應），**截圖看不出 JS 是否真的跑起來**。
+   比較快的驗證法：暫時在頁面最後加一段自我檢測 `<script>`，DOMContentLoaded
+   後在畫面上印出「SELF-TEST: OK / FAILED: <錯誤訊息>」，截圖確認過了
+   再刪掉這段測試碼，不要把它留在正式版裡。
+
 ## 建置指令骨架
 
 跟 [03_工單回報桌機版/build.ps1](../03_工單回報桌機版/build.ps1) 同一套

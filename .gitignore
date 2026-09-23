@@ -1,0 +1,17 @@
+# 編譯輸出（用 build.ps1 用內建 csc.exe 重新產生即可）
+bin/
+obj/
+
+# 自動產生的雜湊索引快取
+image_index.json
+
+# 圖片庫：內容通常是使用者自己的照片（可能含機密/隱私），預設不進版控
+# 只保留資料夾結構本身，實際圖片檔請放進來後自行決定要不要 commit
+images/*
+!images/.gitkeep
+!images/README.md
+
+# Windows / 編輯器雜項
+Thumbs.db
+desktop.ini
+*.user
